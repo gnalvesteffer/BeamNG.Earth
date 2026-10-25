@@ -552,6 +552,9 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
             nf = 2 if area > 6000 else 1
         elif cls == "apartments":
             nf = 3 + int(seed * 3)
+        elif (style.name == "us_texas" and not dense and not row and not shop and not industrial and not shed
+              and neighbours == 0 and area < 1800 and box_fill >= 0.65 and hw <= 18.0):
+            nf = 1 if seed < 0.6 else 2
         elif town:
             nf = 1 if seed < 0.6 else 2                 # low-density suburbs and small towns stay low-rise
         elif area < 900:
@@ -559,8 +562,10 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         else:
             nf = 2 + int(seed * 3)
     roof_given = (attrs.get("roof_shape") or "").lower()
-    texas_suburban_house = (town and style.name == "us_texas" and not row and not shop and not industrial
-                            and not shed and neighbours == 0 and area < 900 and box_fill >= 0.8 and hw <= 14.0
+    house_area_limit = 1800 if style.name == "us_texas" and not dense else 650 if town else 300
+    detached_area_limit = 1800 if style.name == "us_texas" and not dense else 650 if town else 260
+    texas_suburban_house = (style.name == "us_texas" and not dense and not row and not shop and not industrial
+                            and not shed and neighbours == 0 and area < 1800 and box_fill >= 0.65 and hw <= 18.0
                             and (nf <= 2 if nf is not None else h is None or h <= 9.0))
     if roof_given == "flat" and texas_suburban_house:
         # In Killeen-like subdivisions, low detached homes are much more often hipped/gabled than flat; broad map
@@ -573,7 +578,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     elif roof_given in ("skillion", "dome", "onion", "round", "saltbox"):
         roof = "gabled"
     else:
-        detached_house = (cls in HOUSE_CLASSES or (area < (650 if town else 260) and not shop)) and not industrial and not row
+        detached_house = (cls in HOUSE_CLASSES or (area < detached_area_limit and not shop)) and not industrial and not row
         if church and neighbours == 0:
             roof = "gabled"
         elif neighbours >= 1:
@@ -662,7 +667,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
             band = (BAND_OFFICE if seed < 0.5 else BAND_OFFICE2) if tall else BAND_PANEL
         else:
             u_brick = _hash01(seed, "brick")
-            detached = (cls in HOUSE_CLASSES or (area < (650 if town else 260) and not shop)) and not row and neighbours == 0
+            detached = (cls in HOUSE_CLASSES or (area < detached_area_limit and not shop)) and not row and neighbours == 0
             brick = u_brick < brick_share(lat, lon) * (1.15 if row else 0.35 if detached else 1.0)
             if brick:
                 band = BAND_BRICK
@@ -677,7 +682,6 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
                     band = (BAND_SASH, BAND_TALL, BAND_PANEL)[int(seed * 104729) % 3]
         plain = False
     wall = None
-    house_area_limit = 900 if town and style.name == "us_texas" else 650 if town else 300
     house = (cls in HOUSE_CLASSES or (area < house_area_limit and not shop and not industrial)) and not row and not shed \
         and neighbours == 0 and area < house_area_limit  # a long "residential" block is not a house (Fells Point)
     if house and band is not BAND_BRICK and nf <= 3:
