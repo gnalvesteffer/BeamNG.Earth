@@ -12,11 +12,12 @@ import numpy as np
 log = logging.getLogger("earthd.streetview")
 
 API = "https://graph.mapillary.com/images"
-FIELDS = ("id,computed_geometry,computed_compass_angle,camera_parameters,camera_type,"
+FIELDS = ("id,computed_geometry,computed_compass_angle,compass_angle,camera_parameters,camera_type,"
           "captured_at,thumb_2048_url,width,height,quality_score")
 SEARCH_MARGIN_M = 80.0
 MAX_IMAGES = 16
-MIN_CONFIDENCE = 0.12
+# Accept usable but imperfect views too: Mapillary does not have SfM camera calibration for every image.
+MIN_CONFIDENCE = 0.06
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,8 @@ class Mapillary:
         self.fetcher = fetcher
         self._search_cache = OrderedDict()
         self._image_cache = OrderedDict()
+        self._empty_searches = 0
+        self._no_projection_tiles = 0
 
     @property
     def enabled(self):
@@ -186,18 +189,27 @@ class Mapillary:
             geom = row.get("computed_geometry") or row.get("geometry") or {}
             coords = geom.get("coordinates") if isinstance(geom, dict) else None
             angle = row.get("computed_compass_angle")
+            if angle is None:
+                angle = row.get("compass_angle")
             params = row.get("camera_parameters") or []
             w, h = row.get("width"), row.get("height")
-            if not coords or len(coords) < 2 or angle is None or not params or not w or not h:
+            if not coords or len(coords) < 2 or angle is None or not w or not h:
                 continue
             try:
-                focal = float(params[0])
+                # camera_parameters is absent until Mapillary has run SfM on an image. Keep such
+                # perspective images usable with a moderate phone-camera FOV estimate (focal=0.75).
+                focal = float(params[0]) if params else 0.75
                 if not (0.25 <= focal <= 2.5):  # Mapillary focal is normalized by the image's maximum dimension
                     continue
                 out.append(dict(row, lon=float(coords[0]), lat=float(coords[1]), heading=float(angle) % 360.0,
                                 focal=focal))
             except (TypeError, ValueError):
                 continue
+        if not out:
+            self._empty_searches += 1
+            if self._empty_searches == 1 or self._empty_searches % 25 == 0:
+                log.info("Mapillary returned no usable camera records for %d nearby searches",
+                         self._empty_searches)
         self._search_cache[cache_key] = out
         if len(self._search_cache) > 64:
             self._search_cache.popitem(last=False)
@@ -259,7 +271,7 @@ class Mapillary:
                                     row["focal"] * max(int(row["width"]), int(row["height"])),
                                     row["focal"] * max(int(row["width"]), int(row["height"])),
                                     (int(row["width"]) - 1) / 2.0, (int(row["height"]) - 1) / 2.0)
-                    face = best_facade(facade_ring, z0, z1, camera, min_pixels=800.0, max_off_axis=48.0)
+                    face = best_facade(facade_ring, z0, z1, camera, min_pixels=200.0, max_off_axis=65.0)
                 except Exception:
                     continue
                 if face and face["confidence"] >= MIN_CONFIDENCE:
@@ -275,6 +287,10 @@ class Mapillary:
             if len(by_id) >= MAX_IMAGES:
                 break
         if not by_id:
+            self._no_projection_tiles += 1
+            if self._no_projection_tiles == 1 or self._no_projection_tiles % 25 == 0:
+                log.info("Mapillary found images but no projectable facades in %d nearby tiles",
+                         self._no_projection_tiles)
             return None, 0
         os.makedirs(output_dir, exist_ok=True)
         placements, material_rows = {}, []
@@ -304,4 +320,7 @@ class Mapillary:
                 continue
             spec.streetview = {"edge": face["edge"], "uv": face["uv"], "material": name,
                                "image_id": image_id, "confidence": face["confidence"]}
+        projected = sum(1 for spec, _ in winners if getattr(spec, "streetview", None))
+        log.info("Mapillary facades: %d projected on %d buildings from %d nearby images",
+                 projected, len(items), len(candidates))
         return {"materials": material_rows}, len(placements)
