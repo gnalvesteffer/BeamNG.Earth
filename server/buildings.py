@@ -365,6 +365,8 @@ STYLES = {
     "us_east": Style("us_east", 0.75, ((SIDING, 0.75),), 0.55, 0.0, 0.4, _US_ROOFS, barn_red=0.5),
     "us_south": Style("us_south", 0.35, ((SIDING, 0.75),), 0.55, 0.0, 0.4, _US_ROOFS, barn_red=0.5),
     "us_plains": Style("us_plains", 0.15, ((SIDING, 0.75),), 0.55, 0.0, 0.4, _US_ROOFS, barn_red=0.5),
+    # Central Texas suburbs: brick and stucco alongside siding, with the low hipped roofs common in newer subdivisions.
+    "us_texas": Style("us_texas", 0.3, ((STUCCO, 0.4), (SIDING, 0.55)), 0.22, 0.0, 0.72, _US_ROOFS, pitch=22.0, barn_red=0.2),
     "us_west": Style("us_west", 0.15, ((STUCCO, 0.65), (SIDING, 0.25)), 0.25, 0.0, 0.4, _US_ROOFS, barn_red=0.5),
     # Alpine villages: white plaster ground floors, dark wooden chalets, low wide gables of dark or brown roofs
     "alpine": Style("alpine", 0.05, ((SIDING, 0.45),), 0.0, 0.03, 0.15, (_DARK, (ROOF_SLATE, (9, 5))), pitch=24.0,
@@ -400,6 +402,8 @@ def region_style(lat, lon):
     if 24.0 <= lat <= 72.0 and -170.0 <= lon <= -52.0:          # North America (and Canada)
         if lon < -100.0:
             return STYLES["us_west"]
+        if 25.0 <= lat <= 37.0 and -106.0 <= lon <= -93.0:     # Texas and nearby south-central states
+            return STYLES["us_texas"]
         if lon <= -95.0:
             return STYLES["us_plains"]
         return STYLES["us_east"] if lat > 36.0 else STYLES["us_south"]
@@ -549,7 +553,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         elif cls == "apartments":
             nf = 3 + int(seed * 3)
         elif town:
-            nf = 1 if seed < 0.6 else 2                 # small towns: mostly single-storey shops and offices
+            nf = 1 if seed < 0.6 else 2                 # low-density suburbs and small towns stay low-rise
         elif area < 900:
             nf = 2 + int(seed * 2)
         else:
@@ -562,7 +566,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     elif roof_given in ("skillion", "dome", "onion", "round", "saltbox"):
         roof = "gabled"
     else:
-        detached_house = (cls in HOUSE_CLASSES or (area < 260 and not shop)) and not industrial and not row
+        detached_house = (cls in HOUSE_CLASSES or (area < (650 if town else 260) and not shop)) and not industrial and not row
         if church and neighbours == 0:
             roof = "gabled"
         elif neighbours >= 1:
@@ -651,7 +655,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
             band = (BAND_OFFICE if seed < 0.5 else BAND_OFFICE2) if tall else BAND_PANEL
         else:
             u_brick = _hash01(seed, "brick")
-            detached = (cls in HOUSE_CLASSES or (area < 260 and not shop)) and not row and neighbours == 0
+            detached = (cls in HOUSE_CLASSES or (area < (650 if town else 260) and not shop)) and not row and neighbours == 0
             brick = u_brick < brick_share(lat, lon) * (1.15 if row else 0.35 if detached else 1.0)
             if brick:
                 band = BAND_BRICK
@@ -666,8 +670,9 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
                     band = (BAND_SASH, BAND_TALL, BAND_PANEL)[int(seed * 104729) % 3]
         plain = False
     wall = None
-    house = (cls in HOUSE_CLASSES or (area < 260 and not shop and not industrial)) and not row and not shed \
-        and neighbours == 0 and area < 300         # a long "residential" block is not a house (Fells Point)
+    house_area_limit = 650 if town else 300
+    house = (cls in HOUSE_CLASSES or (area < house_area_limit and not shop and not industrial)) and not row and not shed \
+        and neighbours == 0 and area < house_area_limit  # a long "residential" block is not a house (Fells Point)
     if house and band is not BAND_BRICK and nf <= 3:
         # detached houses: siding in the East and South, stucco in the West; windows laid over the wall
         u = _hash01(seed, "wall")
@@ -739,7 +744,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
             facade = f"{SIDING}|{int(_hash01(seed, 'sc') * (len(tints) - 2))}"
     # a front porch (the photos of Lancaster, Ocean City, Frederick, Moab: most houses have one): pitched-roof
     # houses, a regional share; doors() puts it on the front door's wall
-    porch = (house and roof != "flat" and not barn and not shed and area < 300
+    porch = (house and roof != "flat" and not barn and not shed and area < house_area_limit
              and _hash01(seed, "porch") < style.porch)
     if porch:   # pitched roofs draw the walls on the oriented box: an L-shaped house's door wall can be inside it
         _, _, hl, hw = oriented_box(ring)
