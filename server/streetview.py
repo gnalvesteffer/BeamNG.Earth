@@ -12,12 +12,12 @@ import numpy as np
 log = logging.getLogger("earthd.streetview")
 
 API = "https://graph.mapillary.com/images"
-FIELDS = ("id,computed_geometry,computed_compass_angle,compass_angle,camera_parameters,camera_type,"
+FIELDS = ("id,computed_geometry,computed_compass_angle,computed_rotation,compass_angle,camera_parameters,camera_type,"
           "captured_at,thumb_2048_url,width,height,quality_score")
 SEARCH_MARGIN_M = 80.0
 MAX_IMAGES = 16
-# Accept usable but imperfect views too: Mapillary does not have SfM camera calibration for every image.
-MIN_CONFIDENCE = 0.06
+# Photos without calibrated intrinsics/orientation can smear unrelated parts of a street across a wall.
+MIN_CONFIDENCE = 0.14
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,8 @@ class Camera:
     cy: float
     pitch: float = 0.0
     roll: float = 0.0
+    axes: tuple = None
+    distortion: tuple = (0.0, 0.0)
 
     @classmethod
     def from_fov(cls, position, heading, width, height, hfov, vfov=None, **pose):
@@ -46,12 +48,31 @@ class Camera:
 
 def camera_basis(camera):
     """Return unit right/up/forward axes, accounting for heading, pitch and roll."""
+    if camera.axes is not None:
+        return tuple(np.asarray(v, dtype=np.float64) for v in camera.axes)
     h, p, r = np.radians([camera.heading, camera.pitch, camera.roll])
     forward = np.array([np.sin(h) * np.cos(p), np.cos(h) * np.cos(p), -np.sin(p)])
     right = np.array([np.cos(h), -np.sin(h), 0.0])
     up = np.cross(right, forward)
     cr, sr = np.cos(r), np.sin(r)
     return right * cr + up * sr, up * cr - right * sr, forward
+
+
+def camera_axes(rotation):
+    """Convert Mapillary/OpenSfM world-to-camera angle-axis rotation to ENU camera axes."""
+    v = np.asarray(rotation, dtype=np.float64).reshape(3)
+    angle = float(np.linalg.norm(v))
+    if angle < 1e-10:
+        matrix = np.eye(3)
+    else:
+        axis = v / angle
+        x, y, z = axis
+        skew = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
+        matrix = np.eye(3) + np.sin(angle) * skew + (1.0 - np.cos(angle)) * (skew @ skew)
+    # OpenSfM rotation maps world to camera. Invert it to map camera right/down/forward
+    # into world east/north/up; mesh UVs use up rather than the camera's down axis.
+    camera_to_world = matrix.T
+    return camera_to_world[:, 0], -camera_to_world[:, 1], camera_to_world[:, 2]
 
 
 def project(points, camera, *, margin=0.0):
@@ -66,8 +87,13 @@ def project(points, camera, *, margin=0.0):
     depth = d @ forward
     if np.any(depth <= 1e-4):
         return None
-    px = camera.cx + camera.fx * (d @ right) / depth
-    py = camera.cy - camera.fy * (d @ up) / depth
+    # Mapillary/OpenSfM uses radial lens distortion in normalized camera coordinates.
+    xn, yn = (d @ right) / depth, -(d @ up) / depth
+    r2 = xn * xn + yn * yn
+    k1, k2 = camera.distortion
+    radial = 1.0 + k1 * r2 + k2 * r2 * r2
+    px = camera.cx + camera.fx * xn * radial
+    py = camera.cy + camera.fy * yn * radial
     u, v = px / camera.width, 1.0 - py / camera.height
     if np.any(u < -margin) or np.any(u > 1.0 + margin) or np.any(v < -margin) or np.any(v > 1.0 + margin):
         return None
@@ -193,16 +219,16 @@ class Mapillary:
                 angle = row.get("compass_angle")
             params = row.get("camera_parameters") or []
             w, h = row.get("width"), row.get("height")
-            if not coords or len(coords) < 2 or angle is None or not w or not h:
+            if not coords or len(coords) < 2 or angle is None or not params or not w or not h:
                 continue
             try:
-                # camera_parameters is absent until Mapillary has run SfM on an image. Keep such
-                # perspective images usable with a moderate phone-camera FOV estimate (focal=0.75).
-                focal = float(params[0]) if params else 0.75
+                focal = float(params[0])
                 if not (0.25 <= focal <= 2.5):  # Mapillary focal is normalized by the image's maximum dimension
                     continue
+                k1 = float(params[1]) if len(params) > 1 else 0.0
+                k2 = float(params[2]) if len(params) > 2 else 0.0
                 out.append(dict(row, lon=float(coords[0]), lat=float(coords[1]), heading=float(angle) % 360.0,
-                                focal=focal))
+                                focal=focal, distortion=(k1, k2)))
             except (TypeError, ValueError):
                 continue
         if not out:
@@ -264,14 +290,19 @@ class Mapillary:
             facade_ring = buildings.drawn_ring(spec)
             for row in candidates:
                 try:
-                    ce, cn, _ = frame.geodetic_to_enu(row["lat"], row["lon"], 0.0)
-                    camera = Camera((float(ce) - x0, float(cn) - y0,
-                                     float(ground(row["lat"], row["lon"])) + 1.6),
+                    camera_alt = float(ground(row["lat"], row["lon"])) + 1.6
+                    # Building meshes use local ENU up from the anchor origin, not raw
+                    # ellipsoid altitude. Transform all three camera coordinates together.
+                    ce, cn, cz = frame.geodetic_to_enu(row["lat"], row["lon"], camera_alt)
+                    camera = Camera((float(ce) - x0, float(cn) - y0, float(cz)),
                                     row["heading"], int(row["width"]), int(row["height"]),
                                     row["focal"] * max(int(row["width"]), int(row["height"])),
                                     row["focal"] * max(int(row["width"]), int(row["height"])),
-                                    (int(row["width"]) - 1) / 2.0, (int(row["height"]) - 1) / 2.0)
-                    face = best_facade(facade_ring, z0, z1, camera, min_pixels=200.0, max_off_axis=65.0)
+                                    (int(row["width"]) - 1) / 2.0, (int(row["height"]) - 1) / 2.0,
+                                    axes=camera_axes(row["computed_rotation"])
+                                    if row.get("computed_rotation") and len(row["computed_rotation"]) == 3 else None,
+                                    distortion=row["distortion"])
+                    face = best_facade(facade_ring, z0, z1, camera, min_pixels=1000.0, max_off_axis=52.0)
                 except Exception:
                     continue
                 if face and face["confidence"] >= MIN_CONFIDENCE:
