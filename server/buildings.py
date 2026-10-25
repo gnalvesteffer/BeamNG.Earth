@@ -2397,7 +2397,7 @@ def _toll_islands(frame, layers, parts_of, lines, x0, y0):
     Golden Gate's booths are parts of the plaza's footprint, centred in the next tile from most islands."""
     booths = []
     for prings in parts_of.values():
-        for pring, hh in prings:
+        for pring, hh, _facade_color, _roof_color in prings:
             if hh is None or not (TOLL_BOOTH_H[0] <= hh[0] + hh[1] <= TOLL_BOOTH_H[1]):
                 continue
             r = pring - np.array([x0, y0])
