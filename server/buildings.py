@@ -2638,8 +2638,10 @@ def doors(items, lines, x0, y0, drives=None):
         if narrow and spec.band == BAND_BRICK and spec.roof == "flat" and _hash01(spec.seed, "stoop") < STOOP_SHARE:
             spec.stoop = (edge, Le * f)
         driveway = False
-        driveway_candidate = (drives is not None and Le >= 7.0 and spec.roof != "flat" and spec.floors <= 3
-                              and (spec.wall or spec.cls in HOUSE_CLASSES))
+        driveway_candidate = (drives is not None and Le >= 7.0 and spec.roof != "flat" and spec.floors <= 2
+                              and not spec.shop and not spec.plain and spec.cls not in ROW_CLASSES
+                              and spec.cls not in SHOP_CLASSES and spec.cls not in INDUSTRIAL_CLASSES
+                              and spec.cls not in CHURCH_CLASSES)
         if driveway_candidate:
             # the driveway beside the door, straight out to the road's edge
             g = 0.82 if f <= 0.5 else 0.18
