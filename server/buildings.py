@@ -139,12 +139,31 @@ JITTER = 0.06               # a building's colour varies this much (one factor, 
 class _Looks:
     """name -> (material index, RGBA bytes) for one building (its hashed brightness jitter)."""
 
-    def __init__(self, seed):
+    def __init__(self, seed, color_overrides=None):
         self.f = 1.0 + JITTER * (2.0 * _hash01(seed, "jit") - 1.0)
+        self.color_overrides = color_overrides or {}
 
     def __getitem__(self, name):
         mat, c = LOOKS[name]
+        c = self.color_overrides.get(name, c)
         return MATERIALS.index(mat), tuple(int(max(0, min(255, round(255 * v * self.f)))) for v in c) + (255,)
+
+
+def _hex_rgb(value):
+    """Parse an Overture #rgb / #rrggbb color into normalized sRGB vertex tint, or None."""
+    if value is None:
+        return None
+    value = str(value).strip()
+    if value.startswith("#"):
+        value = value[1:]
+    if len(value) == 3:
+        value = "".join(ch * 2 for ch in value)
+    if len(value) != 6:
+        return None
+    try:
+        return tuple(int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return None
 
 # The window sheets' bands, top of the image first (v in Collada convention: v = 1 at the image top).
 # (sheet, band index, bays per 1024 px)
@@ -328,7 +347,7 @@ def oriented_box(p):
 
 class Spec:
     """What is built for one footprint (decided by plan())."""
-    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
+    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "facade_color", "roof_color", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
                  "sign", "porch", "cls", "seed", "deck", "pitch", "portal", "gring")
 
     def __init__(self, **kw):
@@ -456,6 +475,8 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     area = _area2(ring) / 2
     c = ring.mean(0)
     seed = _hash01(round(float(c[0]) * 2), round(float(c[1]) * 2), round(area)) if look is None else look
+    facade_color = _hex_rgb(attrs.get("facade_color"))
+    roof_color = _hex_rgb(attrs.get("roof_color"))
     style = region_style(lat, lon)
     _, _, hl, hw = oriented_box(ring)
     box_fill = area / max(4 * hl * hw, 1e-6)
@@ -727,6 +748,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         _, _, hl, hw = oriented_box(ring)
         porch = area >= 0.9 * 4 * hl * hw
     return Spec(ring=ring, floors=nf, floor_h=floor_h, height=h, roof=roof, roof_mat=roof_mat, facade=facade,
+                facade_color=facade_color, roof_color=roof_color,
                 band=band, shop=shop and not shed and nf >= 1, plain=plain, seed=seed, min_h=0.0, wall=wall,
                 windows=windows, steeple=church and area < 2500, porch=porch, cls=cls,
                 deck=garage and roof == "flat", pitch=style.pitch)
@@ -1542,7 +1564,12 @@ def build(specs_and_ground, lite=False):
     for spec, gmin, gmax in specs_and_ground:
         if spec.cls == "toll_booth":        # a stock prop (toll_booth_rows)
             continue
-        mat_idx = _Looks(spec.seed)
+        colors = {}
+        if spec.facade_color is not None:
+            colors[spec.facade] = spec.facade_color
+        if spec.roof_color is not None:
+            colors[spec.roof_mat] = spec.roof_color
+        mat_idx = _Looks(spec.seed, colors)
         if spec.cls in BRIDGE_CLASSES:
             _steel_frame(m, spec, gmin, mat_idx[spec.facade if spec.facade in LOOKS else STEEL], lite)
             continue
@@ -2137,7 +2164,7 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
     bridge's painted steel). bridges_xy / water_xy (bridge_lines, water_rings): a machine-learned footprint (not
     OSM) on a road bridge, over water or on a public road (roads_xy, or ml_roads_xy for that test alone: the far
     buildings) is a deck, a boat or a vehicle, left out (_ml_false)."""
-    parts_of = {}                       # building id -> [(ring in the anchor frame, own height, bottom)]
+    parts_of = {}                       # building id -> [(ring, height range, facade color, roof color)]
     pseen = set()
     for f in part_layers:
         if f is None or len(f.kind) == 0:
@@ -2158,7 +2185,10 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             if len(outer) < 4:
                 continue
             e, n = mapgeom.enu_xy(f, frame, outer)
-            parts_of.setdefault(bid, []).append((np.stack([e, n], 1), _part_heights(a, i)))
+            facade_colors, roof_colors = a.get("facade_color"), a.get("roof_color")
+            parts_of.setdefault(bid, []).append((np.stack([e, n], 1), _part_heights(a, i),
+                                                  facade_colors[i] if facade_colors is not None else None,
+                                                  roof_colors[i] if roof_colors is not None else None))
     seen = set()
     rings, attrs, looks, mins = [], [], [], []
     for f in layers:
@@ -2192,7 +2222,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             if not (x0 <= cx < x1 and y0 <= cy < y1):
                 continue
             at = {k: (a[k][i] if k in a else None) for k in
-                  ("class", "height", "num_floors", "min_height", "roof_shape", "roof_height", "name", "facade_material")}
+                  ("class", "height", "num_floors", "min_height", "roof_shape", "roof_height", "name",
+                   "facade_material", "facade_color", "roof_color")}
             hh_ = at.get("height")
             if hh_ is not None and np.isfinite(hh_) and 0 < hh_ < FLAT_FOOTPRINT_M and not parts_of.get(str(key)):
                 continue                # a mapped area, not a building (the Golden Gate toll plaza's 0.01 m footprint
@@ -2204,9 +2235,9 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
                 look = _hash01(str(key), "look")
                 bh = at.get("height")
                 fill = float(bh) if bh is not None and np.isfinite(bh) and bh > 0 else \
-                    min(h[0] + h[1] for _, h in bparts if h is not None)
-                top = max([fill] + [h[0] + h[1] for _, h in bparts if h is not None])
-                for pring, hh in bparts:
+                    min(h[0] + h[1] for _, h, _, _ in bparts if h is not None)
+                top = max([fill] + [h[0] + h[1] for _, h, _, _ in bparts if h is not None])
+                for pring, hh, part_facade_color, part_roof_color in bparts:
                     ph, pmh = hh if hh is not None else (fill, 0.0)
                     if ph + pmh < FLAT_FOOTPRINT_M:
                         continue        # (a part taking a flat area's height: FLAT_FOOTPRINT_M)
@@ -2216,6 +2247,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
                     rings.append(r)
                     attrs.append({"class": at["class"], "height": ph, "num_floors": None, "roof_shape": "flat",
                                   "building_height": top, "facade_material": at.get("facade_material"),
+                                  "facade_color": part_facade_color or at.get("facade_color"),
+                                  "roof_color": part_roof_color or at.get("roof_color"),
                                   "bridge_part": _on_support(r, supports) if str(at.get("facade_material") or "")
                                   .lower() in STEEL_MATERIALS else None,
                                   "bridge_masonry": str(at.get("facade_material") or "").lower()

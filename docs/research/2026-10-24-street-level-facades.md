@@ -10,6 +10,8 @@ Can BeamNG.Earth use street-level imagery to make its generated buildings resemb
 
 Buildings are made in `server/buildings.py` from Overture footprints, height/floor data, and optional Overture building parts. The renderer predicts missing roofs and facade types and writes the result into a tile `.cdae`. The road tile contains a colliding building mesh; distant building tiles use lighter render-only geometry. Overture building parts can provide shape and some roof/facade attributes, but they are map geometry rather than textured 3D assets. See the [Overture building guide](https://docs.overturemaps.org/guides/buildings/) and [building part schema](https://docs.overturemaps.org/schema/reference/buildings/building_part/).
 
+The first branch change makes mapped Overture facade and roof colors affect the building mesh, including colors supplied per building part. This gives the current provider's explicit appearance data priority over a guessed tint and creates a small, reviewable step toward photo-derived facade attributes.
+
 BeamNG.Earth's existing street imagery references in the building notes are developer visual comparisons. The runtime data-source list currently contains aerial/satellite imagery and map vectors, not a street-view service. Overhead imagery can help identify roof colors and footprints; it cannot supply a street-facing facade texture.
 
 ## Providers
