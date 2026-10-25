@@ -1562,7 +1562,7 @@ def garage_drives(items, lines, x0, y0):
         p1 = qn + v / max(dl, 1e-9) * (half + 0.1)
         n = max(2, int(np.hypot(*(p1 - p0)) // 4.0) + 1)
         pts = [p0 + (p1 - p0) * (j / (n - 1)) for j in range(n)]
-        out.append({"m": DRIVEWAY["m"], "w": GARAGE_DRIVE_W, "tl": DRIVEWAY["tl"], "p": DRIVEWAY["p"],
+        out.append({"m": DRIVEWAY["m"], "w": GARAGE_DRIVE_W, "tl": DRIVEWAY["tl"], "p": DRIVEWAY["p"], "drive": True,
                     "n": [[round(float(pp[0]), 3), round(float(pp[1]), 3), 0.0] for pp in pts]})
     return out
 
@@ -2655,6 +2655,7 @@ def doors(items, lines, x0, y0, drives=None):
                 n = max(2, int(dl // 4.0) + 1)
                 pts = [p0 + (p1 - p0) * (j / (n - 1)) for j in range(n)]
                 drives.append({"m": DRIVEWAY["m"], "w": DRIVEWAY_W, "tl": DRIVEWAY["tl"], "p": DRIVEWAY["p"],
+                               "drive": True,
                                "n": [[round(float(pp[0]), 3), round(float(pp[1]), 3), 0.0] for pp in pts]})
                 driveway = True
         if spec.roof != "flat" and not narrow and _hash01(spec.seed, "fence") < FENCE_SHARE:

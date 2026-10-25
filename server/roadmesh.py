@@ -27,6 +27,8 @@ LIFT = {"base": 0.0, "gutter": 0.005, "mark": 0.01}   # m above the physics grou
 
 
 def layer_of(chunk):
+    if chunk.get("drive"):
+        return "gutter"             # a driveway overlaps the road surface at its mouth: keep it above the asphalt
     m = chunk["m"]
     if m.startswith("line_") or m.startswith("crossing") or m == "m_metal_grid_drain":
         return "mark"
