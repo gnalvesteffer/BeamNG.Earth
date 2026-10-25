@@ -428,17 +428,18 @@ Risk scale:
 - **Risk:** **low**.
 - **Action:** 1 req/s, as above.
 
-**Mapillary API** (`graph.mapillary.com`, `tiles.mapillary.com`)
+**Mapillary API** (`graph.mapillary.com`, `images.mapillary.com`)
 - **Official limit and rules:** [Q https://www.mapillary.com/developer/api-documentation]
   - Entity APIs "limited to 60,000 per minute per app"; search "10,000 per minute per app"; tiles
     "limited to 50,000 per day".
   - All requests need a token.
   - Over the limit: "Application request limit reached" (code 4), tiles "status code 4xx".
   - Licence CC BY-SA 4.0 (CREDITS.md).
-- **Our worst case:** reference and tuning only, offline tools.
-- **Risk:** **low**.
-- **Action:** dev tool only. 2 concurrent, 5 req/s. The token comes from an environment variable and
-  is never committed.
+- **Our worst case:** one image search per unique 256 m road tile and up to 16 thumbnail downloads per tile,
+  demand-only; the server's shared fetcher caps each host at 1-2 req/s and 1,200 requests/day (1,500 hard).
+- **Risk:** **low**; without `MAPILLARY_ACCESS_TOKEN`, the client makes no requests.
+- **Action:** use the token only in an OAuth header (never URL/log), use session-scoped image files, and retain the
+  visible “Street-level imagery © Mapillary contributors” credit. Images are fetched only for nearby road tiles.
 
 **Esri World Imagery** (opt-in, user's own key)
 - **Official limit and rules:** Esri terms: account or key required, "not intended to export tiles

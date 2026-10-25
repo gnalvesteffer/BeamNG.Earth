@@ -172,6 +172,8 @@ network you trust: the connection is not encrypted.
 2. Copy (or sync) `mod/beamng_earth/` to
    `<BeamNG user folder>/current/mods/unpacked/beamng_earth/`.
 3. Start the server: `python3 server/earthd.py`
+   Optional: set `MAPILLARY_ACCESS_TOKEN` in the server process environment first to enable projected street-level
+   building facades (PowerShell: `$env:MAPILLARY_ACCESS_TOKEN = "..."`). Without it, no Mapillary requests are made.
 4. Start BeamNG.drive and load the **BeamNG.Earth** level. The mod connects to the server and
    streams the world; the status bar at the top shows where you are and the loading, **M** opens the
    world map (search, teleport, GPS routes, Autodrive).

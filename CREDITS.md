@@ -82,7 +82,7 @@ only, nothing redistributed. Licence notes marked *(verify)* must be re-checked 
 | DC Buildings 3D 2024 | DC Office of the CTO | benchmark near Baltimore | CC BY 4.0 | "DC OCTO" | planned (benchmark) |
 | USGS 3DEP lidar point clouds | U.S. Geological Survey | building heights/roofs and canopy in the US | public domain | "USGS 3DEP" | planned |
 | LiDAR HD | IGN France | buildings, canopy heights | Etalab Open Licence 2.0 | "IGN - LiDAR HD" | planned |
-| Mapillary street-level imagery | Mapillary (Meta) | tuning the city generator against real photos | CC BY-SA 4.0, free API token | "Street-level imagery: Mapillary" | planned (reference) |
+| Mapillary street-level imagery | Mapillary (Meta) | optional runtime facade projection on nearby road-facing building walls (`MAPILLARY_ACCESS_TOKEN`; `server/streetview.py`) | CC BY-SA 4.0, Mapillary API client token | "Street-level imagery © Mapillary contributors" | branch (feature/street-level-facade-enrichment) |
 
 ## Software and libraries
 

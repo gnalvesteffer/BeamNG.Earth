@@ -166,6 +166,12 @@ POLICIES = {
     # 20 variables a request = 2 Open-Meteo calls: 500 requests = 1,000 calls a day, hard
     "api.open-meteo.com": HostPolicy(rate=0.1, burst=2.0, max_conc=1, daily_budget=500, daily_hard=500,
                                      cache_ttl=900.0, miss_ttl=None, max_wait=15.0, timeout=10.0, optional=True),
+    # Mapillary street facade enrichment (opt-in with MAPILLARY_ACCESS_TOKEN): demand only, bounded per session.
+    "graph.mapillary.com": HostPolicy(rate=1.0, burst=4.0, max_conc=1, daily_budget=1200, daily_hard=1500,
+                                      miss_ttl=None, max_wait=10.0, timeout=15.0, max_attempts=2, optional=True),
+    "images.mapillary.com": HostPolicy(rate=2.0, burst=6.0, max_conc=2, daily_budget=1200, daily_hard=1500,
+                                       miss_ttl=None, binary=True, max_wait=10.0, timeout=20.0,
+                                       max_attempts=2, optional=True),
     # the EGM2008 coefficients (74 MB once; gravity.py resumes and checks the SHA-256 itself)
     "downloads.sourceforge.net": HostPolicy(rate=1.0, burst=1.0, max_conc=1, daily_budget=None,
                                             offline_ok=True, miss_ttl=None, max_attempts=1, timeout=30.0, optional=True),

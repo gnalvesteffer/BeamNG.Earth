@@ -46,6 +46,16 @@ Recommended first implementation:
 
 This uses the current building mesh path but needs a new per-building facade-texture atlas. The existing renderer batches buildings into tile `.cdae` files with a fixed material set; photo textures therefore need packing into tile or cache-cell atlases with UV rectangles, rather than adding one permanent game material per building. Nearby collisions should stay on the simplified geometry, with textured facades render-only if the provider mesh creates additional vertices or polygons.
 
+### Projection implementation
+
+The feature branch now has an optional Mapillary path. With `MAPILLARY_ACCESS_TOKEN` set in the environment inherited by the companion server, each nearby building tile queries a padded image bbox through the shared rate-limited fetcher. It uses Mapillary's computed camera position and heading, perspective camera calibration, and 2048 thumbnail URL; images are selected by projected facade area, facing angle, visibility in frame, and confidence. Source thumbnails are saved as session-scoped files, and a selected image gets a stable per-image material name so the existing shape pool can safely reuse meshes across tiles. Only that building's selected road-facing wall uses the photo; other walls and all distant LODs keep the generated facade. The current polygon and collision geometry remain map-derived.
+
+The near `.cdae` refers to per-image materials; the Lua extension creates and releases them with the tiles and shapes that use them. Downloaded thumbnails are session-scoped, source bytes are not retained separately, and every fallback path leaves procedural facades available. The overlay and settings attribution line include “Street-level imagery © Mapillary contributors.”
+
+Mapillary camera roll and pitch are not applied yet; the projection currently relies on computed compass heading and a level-camera assumption. It also does not segment trees, vehicles, signs, or windows out of the photo, and it does not test facade occlusion by other buildings. This is an initial rendering feature, not dense photogrammetry.
+
+Set `MAPILLARY_ACCESS_TOKEN` before launching the companion server to enable it. With no token, no API requests are made and the mod renders its usual generated buildings. Search and thumbnail requests are rate-limited and capped by the shared network fetcher. Mapillary metadata fields used here are documented in the [Mapillary API entity reference](https://mapillary.github.io/mapillary-python-sdk/docs/mapillary.config.api/mapillary.config.api.entities/) and the [MapillaryJS camera reference](https://mapillary.github.io/mapillary-js/api/interfaces/api.CameraEnt/).
+
 ## Phased work
 
 ### Phase 0: coverage and rights gate

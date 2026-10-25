@@ -98,6 +98,7 @@ import grading as gradingmod  # noqa: E402
 import roadmesh as roadmeshmod  # noqa: E402
 import roadwidth as roadwidthmod  # noqa: E402
 import mapdata as mapdatamod  # noqa: E402
+import streetview as streetviewmod  # noqa: E402
 import dem as demmod  # noqa: E402
 import mapcells  # noqa: E402
 import pacer  # noqa: E402
@@ -656,6 +657,12 @@ class Server:
         # Far-tile geometry in worker processes too (blockworker.far_geometry; the texture stays here): a
         # ProcessPoolExecutor of tile_workers, or None (built in tile_pool's threads)
         self.far_pool = far_pool
+        self.streetview = streetviewmod.Mapillary(os.environ.get("MAPILLARY_ACCESS_TOKEN"), self.net)
+        self.streetview_tiles = set()   # (anchor id, road tile x/y) with at least one projected photo facade
+        far_bld_pool = far_bld_pool or road_pool
+        if self.streetview.enabled and road_pool is not None:
+            log.info("street facades enabled; building road tiles in-process for camera projection")
+            road_pool = None
         self.road_pool = road_pool          # road tiles in processes (blockworker.roads_tile), else threads
         # far building tiles in a process of their own: in the road pool (first come, first served) a teleport's
         # hundreds of them queued ahead of the road tiles under the car, which drove on bare ground for minutes
@@ -1150,12 +1157,24 @@ class Server:
         wires = [] if self.buildings else None
         park = [] if self.buildings else None
         items = town = None
+        photo_material = None
         if self.buildings:
             items = buildingsmod.road_tile_items(
                 anchor.frame, tx, ty, self.mapdata,
                 lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
                 decks=blockworker._tile_decks(anchor.bridges, cells, tx, ty))
             town = buildingsmod.coverage(items) < buildingsmod.POLES_COVERAGE
+            if self.streetview.enabled and items:
+                x0, y0, x1, y1 = roadsmod.tile_bbox(tx, ty)
+                photo_dir = os.path.join(self.out_dir, "streetview")
+                ground_at = lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom))
+                photo_material, photo_count = self.streetview.prepare_tile(
+                    items, anchor.frame, (x0, y0, x1, y1), ground_at, photo_dir)
+                if photo_material:
+                    for row in photo_material["materials"]:
+                        row["texture"] = f"{self.vfs_dir}/streetview/{os.path.basename(row['texture'])}"
+                    self.streetview_tiles.add((aid, tx, ty))
+                    log.debug("road tile %d_%d: projected %d Mapillary facade images", tx, ty, photo_count)
         rwalls = []
         ctx = []
         box = roadsmod.tile_bbox(tx, ty)
@@ -1199,7 +1218,8 @@ class Server:
                                          lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
                                          None, None, items)
         return roadsmod.write_tile(self.out_dir, self.vfs_dir, aid, tx, ty, chunks, walks if self.sidewalks else None,
-                                   mesh, dmesh, bld, props, wires, park, tunnel_mesh=tmesh)
+                                   mesh, dmesh, bld, props, wires, park, tunnel_mesh=tmesh,
+                                   photo_material=photo_material)
 
     def ground_z_at(self, anchor, e, n):
         """The ground's height (the frame's up) at (e, n) of anchor's frame, from the elevation data (not graded: the
@@ -1798,11 +1818,15 @@ class Server:
     def attribution_rest(self):
         """The credit line's sources other than the imagery (weather, elevation)."""
         parts = [weathermod.CREDIT] if self.weather is not None else []
+        if self.streetview.enabled and self.buildings:
+            parts.append("Street-level imagery © Mapillary contributors")
         return "; ".join(parts + [ELEVATION_CREDIT])
 
     def attribution(self):
         """The credit line the mod shows: imagery (if on) and elevation sources."""
         parts = [self.imagery.attribution()] if self.imagery is not None else []
+        if self.streetview.enabled and self.buildings:
+            parts.append("Street-level imagery © Mapillary contributors")
         if self.weather is not None:
             parts.append(weathermod.CREDIT)
         return "; ".join(parts + [ELEVATION_CREDIT])

@@ -53,6 +53,7 @@ MAX_DEM_KEYS = 64               # DEM tiles looked up per far tile (a footprint 
 # without the licence name); the others as in imagery.SOURCES / earthd.ELEVATION_CREDIT. The full
 # credits stay in hello.attribution (the settings page) and CREDITS.md.
 IMAGERY = {
+    "mapillary": "Street-level imagery © Mapillary contributors",
     "md6in": "State of Maryland, MD iMAP / DoIT",
     "naipusda": "USDA NAIP",
     "naip": "USDA NAIP via USGS The National Map",
@@ -74,6 +75,7 @@ WEATHER_ID = "wx:open-meteo"
 # The overlay's short names (the user, 2026-10-18: "trim down the amount of text we use to credit a single source").
 # The full wordings above stay the attribution of record: hello.attribution (the settings page) and CREDITS.md.
 SHORT = {
+    "img:mapillary": "Mapillary street imagery",
     "img:md6in": "MD iMAP", "img:naipusda": "USDA NAIP", "img:naip": "USDA NAIP", "img:usgs": "USGS",
     "img:eox2023": "EOX Sentinel-2 cloudless 2023 (Copernicus)",
     "img:eox2016": "EOX Sentinel-2 cloudless 2016 (Copernicus)",
@@ -327,6 +329,10 @@ class Credits:
                 if keep and d <= self.near_m + self.hyst_m:
                     kept |= ids & keep
         near |= kept
+        roads = getattr(conn, "roads", None)
+        if conn.s.streetview.enabled and conn.s.buildings and roads is not None and any(
+                (roads.aid, tx, ty) in conn.s.streetview_tiles for tx, ty in roads.sent):
+            near.add("img:mapillary")
         if not near and not far and not known:
             return None
         if conn.weather.msg is not None:

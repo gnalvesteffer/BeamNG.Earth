@@ -92,6 +92,8 @@ local walkQ = {}            -- { key, walk = {shape, pos}, what = 'walk' | 'road
 local createQ = {}          -- { key, chunk } FIFO
 local deleteQ = {}          -- object ids
 local loadedMaterials = false
+local photoMaterials = {}   -- name -> { refs, texture }; held by a tile and its imported building shapes
+local photoObjects = {}     -- TSStatic object id -> photo material name
 local anchorId = nil
 local far = {}              -- far buildings (server buildings.far_tile): key "a:tx_ty" -> { anchor, id, shape, pos, hidden }
 local farQ = {}             -- keys of far tiles to make
@@ -151,6 +153,49 @@ local function loadMaterials()
   local pad = scenetree.findObject('tactile_indicator')    -- curb ramp pads: US truncated domes are yellow
   if pad then pcall(function() pad:setField('baseColorFactor', 0, '0.95 0.78 0.18 1'); pad:flush(); pad:reload() end) end
   loadedMaterials = true
+end
+
+local function ensurePhotoMaterial(desc)
+  if type(desc) ~= 'table' or type(desc.name) ~= 'string' or type(desc.texture) ~= 'string'
+    or not desc.name:match('^bne_bld_photo_[%w_%-]+$')
+    or not desc.texture:match('^/temp/beamngEarth/[%w%-]+/streetview/streetview_image_[%w_%-]+%.jpg$')
+    or not FS:fileExists(desc.texture) then return false end
+  if photoMaterials[desc.name] then
+    local m = scenetree.findObject(desc.name)
+    if m then m:setField('colorMap', 0, desc.texture); m:flush(); m:reload() end
+    photoMaterials[desc.name].refs = photoMaterials[desc.name].refs + 1 -- this tile's hold
+    return m ~= nil
+  end
+  local m = scenetree.findObject(desc.name)
+  if not m then
+    m = createObject('Material')
+    m:setField('mapTo', 0, desc.name)
+    m.canSave = false
+    m:registerObject(desc.name)
+  end
+  m:setField('colorMap', 0, desc.texture)
+  m:setField('roughnessFactor', 0, '1')
+  m:setField('useAnisotropic', 0, '1')
+  m:flush()
+  m:reload()
+  photoMaterials[desc.name] = { refs = 1, texture = desc.texture }
+  return true
+end
+
+local function photoRef(name)
+  local m = name and photoMaterials[name]
+  if m then m.refs = m.refs + 1 end
+end
+
+local function photoUnref(name)
+  local m = name and photoMaterials[name]
+  if not m then return end
+  m.refs = m.refs - 1
+  if m.refs <= 0 then
+    local o = scenetree.findObject(name)
+    if o then o:delete() end
+    photoMaterials[name] = nil
+  end
 end
 
 local function tileKey(aid, k) return tostring(aid) .. ':' .. tostring(k) end
@@ -247,6 +292,7 @@ local function dropTile(key)
   if t.road then deleteQ[#deleteQ + 1] = t.road end
   if t.deck then deleteQ[#deleteQ + 1] = t.deck end
   for _, w in ipairs({ 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel' }) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
+  for _, name in ipairs(t.photoMaterials or {}) do photoUnref(name) end
   if t.wire then deleteQ[#deleteQ + 1] = t.wire end
   -- and its meshes not made yet (from KyzoFox's 1.5.4, PR #64): a tile sent again under the same key left its old
   -- walkQ / held / createQ entries, which were then made for the new tile from pooled shape paths that had just been
@@ -408,6 +454,13 @@ function M.onTile(msg, currentAnchor)
     lastError = 'unreadable road tile ' .. tostring(msg.path)
     return false
   end
+  local photos = {}
+  if type(data.photoMaterials) == 'table' then
+    for _, photo in ipairs(data.photoMaterials) do
+      if ensurePhotoMaterial(photo) then photos[#photos + 1] = photo.name
+      else lastError = 'unable to load street facade texture ' .. tostring(photo and photo.texture) end
+    end
+  end
   -- pooled shape files: the server's slot paths instead of the tile's own files
   local slots = {}
   for _, what in ipairs({ 'road', 'deck', 'walk', 'walkcol', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel' }) do
@@ -424,6 +477,7 @@ function M.onTile(msg, currentAnchor)
   local road = type(data.road) == 'table' and data.road.shape and type(data.road.pos) == 'table' and data.road
   tiles[key] = { anchor = msg.anchorId, objs = {}, queued = road and 0 or #data.chunks,
     colliders = type(data.colliders) == 'table' and data.colliders or {}, slots = slots, at = now(), colWant = {} }
+  if #photos > 0 then tiles[key].photoMaterials = photos end
   sinceChange = stopwatch.new()
   if road then                -- the tile's road mesh replaces its DecalRoads (server/roadmesh.py)
     walkQ[#walkQ + 1] = { key = key, walk = road, what = 'road', tile = tiles[key] }
@@ -680,6 +734,11 @@ function M.update(gov, currentAnchor, player, view)
       o:delete()
     end
     slotObjGone(did)
+    local photos = photoObjects[did]
+    if photos then
+      photoObjects[did] = nil
+      for _, name in ipairs(photos) do photoUnref(name) end
+    end
     local ms = now() - t0
     gov:charge('roadDelete', ms)
     noteUnit('delete', ms)
@@ -727,6 +786,13 @@ function M.update(gov, currentAnchor, player, view)
       local ok, id = pcall(createWalk, q.walk, (q.what == 'bldcol' or q.what == 'walkcol') and 'Collision Mesh' or not isRoad)
       if ok then slotMade(id, q.walk.shape) end
       if ok then
+        if q.what == 'bld' or q.what:match('^bld%d+$') then
+          if t.photoMaterials then
+            local names = {}
+            for _, name in ipairs(t.photoMaterials) do photoRef(name); names[#names + 1] = name end
+            photoObjects[id] = names
+          end
+        end
         if not isRoad then t.cq = t.cq or {}; t.cq[q.what] = q end
         if isRoad then t[q.what] = id else
           t[q.what] = id; collisionDirty = true; newColliders[#newColliders + 1] = { id, q }

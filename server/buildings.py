@@ -139,11 +139,14 @@ JITTER = 0.06               # a building's colour varies this much (one factor, 
 class _Looks:
     """name -> (material index, RGBA bytes) for one building (its hashed brightness jitter)."""
 
-    def __init__(self, seed, color_overrides=None):
+    def __init__(self, seed, color_overrides=None, photo_materials=()):
         self.f = 1.0 + JITTER * (2.0 * _hash01(seed, "jit") - 1.0)
         self.color_overrides = color_overrides or {}
+        self.photo_materials = {name: len(MATERIALS) + i for i, name in enumerate(photo_materials)}
 
     def __getitem__(self, name):
+        if name in self.photo_materials:
+            return self.photo_materials[name], (255, 255, 255, 255)
         mat, c = LOOKS[name]
         c = self.color_overrides.get(name, c)
         return MATERIALS.index(mat), tuple(int(max(0, min(255, round(255 * v * self.f)))) for v in c) + (255,)
@@ -347,7 +350,7 @@ def oriented_box(p):
 
 class Spec:
     """What is built for one footprint (decided by plan())."""
-    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "facade_color", "roof_color", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
+    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "facade_color", "roof_color", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop", "streetview",
                  "sign", "porch", "cls", "seed", "deck", "pitch", "portal", "gring")
 
     def __init__(self, **kw):
@@ -871,6 +874,11 @@ def _walls(m, spec, ring, z0, z_eave, mat_idx, lite=False):
         L = float(math.hypot(*(b - a)))
         if L < 0.05:
             continue
+        photo = getattr(spec, "streetview", None)
+        if not lite and photo and photo.get("edge") == i and photo.get("material"):
+            m.quad((a[0], a[1], z0), (b[0], b[1], z0), (b[0], b[1], z_eave), (a[0], a[1], z_eave),
+                   *photo["uv"], mat_idx[photo["material"]])
+            continue
         if spec.wall:
             _plain_wall_with_windows(m, spec, a, b, L, z0, z_eave, fac, mat_idx, i)
             continue
@@ -1281,6 +1289,8 @@ def build_parts(specs_and_ground, lite=False, max_verts=MAX_MESH_VERTS, with_lod
     Each building is built once (build draws them one by one) and the meshes joined. with_lod: each mesh carries the
     lite mesh of its buildings as a 7th element (write: the shape's coarse detail)."""
     parts, cur, cur_lite, n = [], [], [], 0
+    photo_materials = tuple(sorted({s.streetview["material"] for s, _, _ in specs_and_ground
+                                    if getattr(s, "streetview", None) and s.streetview.get("material")}))
 
     def flush():
         if cur:
@@ -1288,7 +1298,7 @@ def build_parts(specs_and_ground, lite=False, max_verts=MAX_MESH_VERTS, with_lod
             parts.append(mesh + (_concat(cur_lite) if cur_lite else None,) if with_lod and not lite else mesh)
 
     for item in specs_and_ground:
-        one = build([item], lite)
+        one = build([item], lite, photo_materials)
         if one is None:
             continue
         if cur and n + len(one[0]) > max_verts:
@@ -1556,7 +1566,7 @@ GARAGE_DRIVE_W = 6.5        # m: a garage entrance's two lanes
 GARAGE_DRIVE_MAX_M = 25.0   # m from the outline to a road's edge at most
 
 
-def build(specs_and_ground, lite=False):
+def build(specs_and_ground, lite=False, photo_materials=()):
     """The tile's mesh from [(Spec, ground z min, ground z max)] with rings in the tile's local frame:
     (positions, uvs, tris, tri material indices, MATERIALS) or None if empty. lite (far tiles): no
     cornices, whole walls instead of one quad per bay."""
@@ -1569,7 +1579,7 @@ def build(specs_and_ground, lite=False):
             colors[spec.facade] = spec.facade_color
         if spec.roof_color is not None:
             colors[spec.roof_mat] = spec.roof_color
-        mat_idx = _Looks(spec.seed, colors)
+        mat_idx = _Looks(spec.seed, colors, photo_materials if not lite else ())
         if spec.cls in BRIDGE_CLASSES:
             _steel_frame(m, spec, gmin, mat_idx[spec.facade if spec.facade in LOOKS else STEEL], lite)
             continue
@@ -1602,7 +1612,8 @@ def build(specs_and_ground, lite=False):
     if m.n == 0:
         return None
     P, UV, T, M, C = m.arrays()
-    return P, UV, T, M, MATERIALS, C
+    materials = MATERIALS + (tuple(photo_materials) if not lite else ())
+    return P, UV, T, M, materials, C
 
 
 def _steel_frame(m, spec, gmin, mat, lite=False, legs_only=False):
