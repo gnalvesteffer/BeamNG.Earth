@@ -328,7 +328,7 @@ def oriented_box(p):
 
 class Spec:
     """What is built for one footprint (decided by plan())."""
-    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
+    __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_axis", "roof_mat", "facade", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
                  "sign", "porch", "cls", "seed", "deck", "pitch", "portal", "gring")
 
     def __init__(self, **kw):
@@ -586,6 +586,18 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     if roof != "flat" and (box_fill < (0.6 if church else 0.8) or hw < 2.0
                            or hw > (18.0 if barn else 20.0 if church else 14.0)):
         roof = "flat"
+    roof_axis = 0                 # oriented_box's long axis (the usual ridge direction)
+    roof_orientation = str(attrs.get("roof_orientation") or "").lower()
+    roof_direction = attrs.get("roof_direction")
+    if roof != "flat":
+        if roof_direction is not None and np.isfinite(roof_direction):
+            bearing = math.radians(float(roof_direction) % 360.0)
+            ridge = np.array([math.sin(bearing), math.cos(bearing)])
+            _, u, _, _ = oriented_box(ring)
+            v = np.array([-u[1], u[0]])
+            roof_axis = int(abs(float(ridge @ v)) > abs(float(ridge @ u)))
+        elif roof_orientation == "across":
+            roof_axis = 1
     # a city tower's ground floor is shops or a lobby (Midtown, 2026-10-14: most towers have no class, and their
     # curtain wall came down to the pavement)
     tall = (nf or (h or 0) / FLOOR_M) >= TOWER_SHOP_FLOORS
@@ -593,15 +605,21 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         shop = True
     if church:
         shop = False                                # (no shopfronts on a church, Cluj 2026-10-15)
+    pitch = style.pitch or PITCH.get(roof, PITCH["gabled"])
     if h is None:
         h = nf * floor_h + (GROUND_FLOOR_SHOP_M - floor_h if shop and nf > 1 else 0.0) + (0.6 if roof == "flat" else 0.2)
         if west_town and roof == "flat" and nf == 1 and area >= 80 and not (shed or barn):
             h += FALSE_FRONT_M                      # a main-street shop's tall parapet
     else:
-        if attrs.get("roof_height") and np.isfinite(attrs["roof_height"]) and roof != "flat":
-            h = max(2.5, h - float(attrs["roof_height"]))
+        roof_height_attr = attrs.get("roof_height")
+        if roof_height_attr is not None and np.isfinite(roof_height_attr) and roof_height_attr > 0 and roof != "flat":
+            roof_height = float(roof_height_attr)
+            h = max(2.5, h - roof_height)
+            slope_half_span = hl if roof_axis else hw
+            pitch = math.degrees(math.atan2(roof_height, max(slope_half_span, 0.1)))
         elif roof != "flat":
-            h = max(2.5, h - hw * math.tan(math.radians(style.pitch or PITCH[roof])))
+            slope_half_span = hl if roof_axis else hw
+            h = max(2.5, h - slope_half_span * math.tan(math.radians(pitch)))
         if nf is None:
             # a church: one tall storey (Cluj's St. Michael's, 25 m, came out as three 8 m floors)
             nf = 1 if church else max(1, int(round(h / floor_h)))
@@ -726,10 +744,11 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     if porch:   # pitched roofs draw the walls on the oriented box: an L-shaped house's door wall can be inside it
         _, _, hl, hw = oriented_box(ring)
         porch = area >= 0.9 * 4 * hl * hw
-    return Spec(ring=ring, floors=nf, floor_h=floor_h, height=h, roof=roof, roof_mat=roof_mat, facade=facade,
+    return Spec(ring=ring, floors=nf, floor_h=floor_h, height=h, roof=roof, roof_axis=roof_axis,
+                roof_mat=roof_mat, facade=facade,
                 band=band, shop=shop and not shed and nf >= 1, plain=plain, seed=seed, min_h=0.0, wall=wall,
                 windows=windows, steeple=church and area < 2500, porch=porch, cls=cls,
-                deck=garage and roof == "flat", pitch=style.pitch)
+                deck=garage and roof == "flat", pitch=pitch)
 
 
 class Mesh:
@@ -1200,6 +1219,8 @@ def _roof(m, spec, ring, z_eave, mat_idx):
         return
     c, u, hl, hw = oriented_box(ring)
     v = np.array([-u[1], u[0]])
+    if spec.roof_axis == 1:
+        u, v, hl, hw = v, -u, hw, hl
     hl2, hw2 = hl + EAVE_M, hw + EAVE_M
     rise = hw2 * math.tan(math.radians(roof_pitch(spec)))
     ze = z_eave - EAVE_M * math.tan(math.radians(roof_pitch(spec)))
@@ -2192,7 +2213,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
             if not (x0 <= cx < x1 and y0 <= cy < y1):
                 continue
             at = {k: (a[k][i] if k in a else None) for k in
-                  ("class", "height", "num_floors", "min_height", "roof_shape", "roof_height", "name", "facade_material")}
+                  ("class", "height", "num_floors", "min_height", "roof_shape", "roof_height", "roof_direction",
+                   "roof_orientation", "name", "facade_material")}
             hh_ = at.get("height")
             if hh_ is not None and np.isfinite(hh_) and 0 < hh_ < FLAT_FOOTPRINT_M and not parts_of.get(str(key)):
                 continue                # a mapped area, not a building (the Golden Gate toll plaza's 0.01 m footprint
