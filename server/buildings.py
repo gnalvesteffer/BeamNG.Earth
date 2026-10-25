@@ -559,7 +559,14 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         else:
             nf = 2 + int(seed * 3)
     roof_given = (attrs.get("roof_shape") or "").lower()
-    if roof_given in ("gabled", "hipped", "flat"):
+    texas_suburban_house = (town and style.name == "us_texas" and not row and not shop and not industrial
+                            and not shed and neighbours == 0 and area < 900 and box_fill >= 0.8 and hw <= 14.0
+                            and (nf <= 2 if nf is not None else h is None or h <= 9.0))
+    if roof_given == "flat" and texas_suburban_house:
+        # In Killeen-like subdivisions, low detached homes are much more often hipped/gabled than flat; broad map
+        # roof tags on small footprints otherwise make houses read as office blocks.
+        roof = "hipped" if _hash01(seed, "texas roof") < style.hipped else "gabled"
+    elif roof_given in ("gabled", "hipped", "flat"):
         roof = roof_given
     elif roof_given in ("pyramidal", "half-hipped", "mansard", "gambrel"):
         roof = "hipped"
@@ -670,7 +677,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
                     band = (BAND_SASH, BAND_TALL, BAND_PANEL)[int(seed * 104729) % 3]
         plain = False
     wall = None
-    house_area_limit = 650 if town else 300
+    house_area_limit = 900 if town and style.name == "us_texas" else 650 if town else 300
     house = (cls in HOUSE_CLASSES or (area < house_area_limit and not shop and not industrial)) and not row and not shed \
         and neighbours == 0 and area < house_area_limit  # a long "residential" block is not a house (Fells Point)
     if house and band is not BAND_BRICK and nf <= 3:
