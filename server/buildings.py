@@ -2536,7 +2536,7 @@ MAIN_STREET_SHOPS = 0.75     # the share of such buildings that do
 
 
 DRIVEWAY_W = 3.2            # m
-DRIVEWAY = {"m": "road_asphalt_2lane", "tl": 11.0, "p": 19}     # a road tile chunk's look (roads.LOOK)
+DRIVEWAY = {"m": "sidewalk_concrete", "tl": 11.0, "p": 16}      # lighter concrete stands out from the asphalt street
 
 
 def doors(items, lines, x0, y0, drives=None):
@@ -2626,7 +2626,10 @@ def doors(items, lines, x0, y0, drives=None):
         # brick row houses (an eastern city's): white marble steps up to the door
         if narrow and spec.band == BAND_BRICK and spec.roof == "flat" and _hash01(spec.seed, "stoop") < STOOP_SHARE:
             spec.stoop = (edge, Le * f)
-        if drives is not None and spec.wall and Le >= 7.0:
+        driveway = False
+        driveway_candidate = (drives is not None and Le >= 7.0 and spec.roof != "flat" and spec.floors <= 3
+                              and (spec.wall or spec.cls in HOUSE_CLASSES))
+        if driveway_candidate:
             # the driveway beside the door, straight out to the road's edge
             g = 0.82 if f <= 0.5 else 0.18
             p0 = a + d * (Le * g) + out * 0.2
@@ -2640,9 +2643,10 @@ def doors(items, lines, x0, y0, drives=None):
                 pts = [p0 + (p1 - p0) * (j / (n - 1)) for j in range(n)]
                 drives.append({"m": DRIVEWAY["m"], "w": DRIVEWAY_W, "tl": DRIVEWAY["tl"], "p": DRIVEWAY["p"],
                                "n": [[round(float(pp[0]), 3), round(float(pp[1]), 3), 0.0] for pp in pts]})
+                driveway = True
         if spec.roof != "flat" and not narrow and _hash01(spec.seed, "fence") < FENCE_SHARE:
             rows.extend(_front_fence(spec, a, d, Le, f, A[kseg], D[kseg], L2[kseg], SHALF[kseg], gmin,
-                                     drives is not None and spec.wall and Le >= 7.0, (A, B, SHALF)))
+                                     driveway, (A, B, SHALF)))
         p = a + d * (Le * f) + out * DOOR_OUT_M
         gd = door_ground(spec, edge, Le * f, gmax) if spec.stoop else gmax     # a stoop's door: over its own ground
         base = gd + (STOOP_H if spec.stoop else 0.0) + (PORCH_DECK_M if spec.porch else 0.0)   # (the deck / stoop)
