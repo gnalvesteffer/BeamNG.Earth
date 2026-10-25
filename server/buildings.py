@@ -2240,7 +2240,7 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
                 continue                # a mapped area, not a building (the Golden Gate toll plaza's 0.01 m footprint
                                         # drew a slab with a rim round the booths, 2026-10-21)
             bparts = parts_of.get(str(key)) if key is not None else None
-            if bparts and any(h is not None for _, h in bparts):
+            if bparts and any(h is not None for _, h, _, _ in bparts):
                 # drawn as its parts, with the building's class and one look for all of them; a part
                 # without a height takes the building's (else its lowest known part's)
                 look = _hash01(str(key), "look")
